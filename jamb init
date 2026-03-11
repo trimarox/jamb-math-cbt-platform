@@ -63,3 +63,129 @@ app.use('/api/ai', aiRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const mongoose = require('mongoose');
+
+const questionSchema = new mongoose.Schema({
+  questionText: { type: String, required: true },
+  options: {
+    A: { type: String, required: true },
+    B: { type: String, required: true },
+    C: { type: String, required: true },
+    D: { type: String, required: true }
+  },
+  correctAnswer: { type: String, enum: ['A', 'B', 'C', 'D'], required: true },
+  explanation: { type: String, required: true },
+  topic: { type: String, required: true }, // e.g., 'Algebra', 'Calculus'
+  difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], default: 'Medium' },
+  isAIGenerated: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Question', questionSchema);
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema({
+  fullName: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  examHistory: [{
+    date: { type: Date, default: Date.now },
+    score: Number,
+    totalQuestions: Number,
+    jambScore: Number, // Calculated out of 400
+    answers: [{ questionId: mongoose.Schema.Types.ObjectId, selectedOption: String, isCorrect: Boolean }]
+  }]
+});
+
+// Hash password before saving
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 10);
+  next();
+});
+
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+module.exports = mongoose.model('User', userSchema);
+const { OpenAI } = require('openai');
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY, // Or use Groq client
+});
+
+const generateMathQuestion = async (topic) => {
+  const prompt = `
+    You are a JAMB (Joint Admissions and Matriculation Board) examiner in Nigeria.
+    Generate a standard JAMB Mathematics question on the topic: "${topic}".
+    
+    The output must be a valid JSON object with the following structure:
+    {
+      "questionText": "The question text here...",
+      "options": {
+        "A": "Option A text",
+        "B": "Option B text",
+        "C": "Option C text",
+        "D": "Option D text"
+      },
+      "correctAnswer": "A", // Must be one of A, B, C, D
+      "explanation": "Detailed explanation of why the answer is correct and how to solve it.",
+      "difficulty": "Medium" // Can be Easy, Medium, or Hard
+    }
+    
+    Ensure the question is clear, the options are plausible (distractors are logical), and the math is accurate.
+  `;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview", // or "mixtral-8x7b-32768" for Groq
+      messages: [{ role: "system", content: prompt }],
+      response_format: { type: "json_object" }
+    });
+
+    const content = response.choices[0].message.content;
+    return JSON.parse(content);
+  } catch (error) {
+    console.error("AI Generation Error:", error);
+    throw new Error("Failed to generate question");
+  }
+};
+
+module.exports = { generateMathQuestion };
+const express = require('express');
+const router = express.Router();
+const Question = require('../models/Question');
+const { generateMathQuestion } = require('../utils/aiGenerator');
+
+// POST /api/ai/generate
+router.post('/generate', async (req, res) => {
+  try {
+    const { topic, count = 1 } = req.body; // e.g., topic: "Differentiation"
+    
+    const generatedQuestions = [];
+    
+    for (let i = 0; i < count; i++) {
+      const aiData = await generateMathQuestion(topic);
+      
+      const newQuestion = new Question({
+        ...aiData,
+        topic,
+        isAIGenerated: true
+      });
+      
+      await newQuestion.save();
+      generatedQuestions.push(newQuestion);
+    }
+
+    res.status(201).json({ 
+      message: `Successfully generated ${count} questions on ${topic}`,
+      questions: generatedQuestions 
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+module.exports = router;
