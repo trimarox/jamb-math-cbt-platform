@@ -1,0 +1,65 @@
+jamb-maths-cbt/
+├── client/                 # React Frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── components/     # UI Components
+│   │   ├── pages/          # Screens (Login, Dashboard, Exam)
+│   │   ├── context/        # Global State (Auth, Exam)
+│   │   ├── hooks/          # Custom logic
+│   │   └── App.jsx
+│   └── package.json
+├── server/                 # Node.js Backend
+│   ├── config/
+│   ├── controllers/
+│   ├── models/
+│   ├── routes/
+│   ├── middleware/
+│   ├── utils/              # AI Generation Logic
+│   └── server.js
+└── package.json (Root)
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+// Import Routes
+const authRoutes = require('./routes/auth.routes');
+const examRoutes = require('./routes/exam.routes');
+const adminRoutes = require('./routes/admin.routes');
+const aiRoutes = require('./routes/ai.routes');
+
+dotenv.config();
+
+const app = express();
+
+// Security Middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  credentials: true
+}));
+
+// Rate Limiting (Prevent brute force)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+});
+app.use('/api/', limiter);
+
+app.use(express.json());
+
+// Database Connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/jamb_cbt')
+  .then(() => console.log('MongoDB Connected'))
+  .catch(err => console.error(err));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/exam', examRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/ai', aiRoutes);
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
